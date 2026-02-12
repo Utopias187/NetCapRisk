@@ -8,9 +8,11 @@ from .models import (
     per_flow_throughput_shared_backbone,
     effective_link_rates,
 )
+from .report import dos_sweep
 
 
 def _print(data: dict, as_json: bool) -> None:
+    # quick switch between human output and JSON
     if as_json:
         print(json.dumps(data, indent=2))
     else:
@@ -59,7 +61,7 @@ def cmd_fair(args: argparse.Namespace) -> None:
 
 def cmd_effective(args: argparse.Namespace) -> None:
     eff_links = effective_link_rates(args.links, args.eff)
-    t = min(eff_links) if eff_links else 0.0  # no sender given, so path bottleneck wins
+    t = min(eff_links) if eff_links else 0.0  # sender/receiver not provided here
 
     out = {
         "scenario": "effective_links",
@@ -71,8 +73,37 @@ def cmd_effective(args: argparse.Namespace) -> None:
     _print(out, args.json)
 
 
+def cmd_dos(args: argparse.Namespace) -> None:
+    report = dos_sweep(
+        Rs_mbps=args.rs,
+        Rc_mbps=args.rc,
+        R_backbone_mbps=args.backbone,
+        N_values=args.N,
+        warn_threshold=args.warn_threshold,
+    )
+
+    if args.json:
+        _print(report, True)
+        return
+
+    print("N_flows | per-flow (Mbps) | total (Mbps) | headroom | risk")
+    print("--------------------------------------------------------")
+    for r in report["results"]:
+        risk = ",".join(r["risk"]) if r["risk"] else "-"
+        print(
+            f"{r['N_flows']:>6} | "
+            f"{r['per_flow_throughput_mbps']:>13.4f} | "
+            f"{r['total_throughput_mbps']:>11.4f} | "
+            f"{r['backbone_headroom_ratio']:>7.3f} | "
+            f"{risk}"
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="netcaprisk", description="Mini network throughput + risk modeling tool")
+    p = argparse.ArgumentParser(
+        prog="netcaprisk",
+        description="Mini network throughput + risk modeling tool",
+    )
     p.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     sub = p.add_subparsers(dest="command", required=True)
@@ -95,6 +126,14 @@ def build_parser() -> argparse.ArgumentParser:
     s3.add_argument("--eff", type=float, nargs="+", required=True, help="efficiencies in [0,1]")
     s3.set_defaults(func=cmd_effective)
 
+    s4 = sub.add_parser("dos", help="simulate load increase (DoS pressure) on shared backbone")
+    s4.add_argument("--rs", type=float, required=True, help="sender rate (Mbps)")
+    s4.add_argument("--rc", type=float, required=True, help="receiver rate (Mbps)")
+    s4.add_argument("--backbone", type=float, required=True, help="backbone capacity (Mbps)")
+    s4.add_argument("--N", type=int, nargs="+", required=True, help="flow counts to sweep")
+    s4.add_argument("--warn-threshold", type=float, default=0.10, help="headroom ratio warning threshold")
+    s4.set_defaults(func=cmd_dos)
+
     return p
 
 
@@ -103,6 +142,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     args = parser.parse_args(argv)
 
     if args.command == "single" and args.names is not None and len(args.names) == 0:
-        args.names = None  # tiny cleanup for users passing --names with nothing
+        args.names = None
 
     args.func(args)
