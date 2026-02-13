@@ -1,0 +1,19 @@
+{
+  "meta": { "system": "demo", "owner": "you" },
+  "single_path": {
+    "rs_mbps": 50,
+    "links_mbps": [100, 20, 80],
+    "link_names": ["a", "b", "c"]
+  },
+  "fair_share": {
+    "rs_mbps": 200,
+    "rc_mbps": 200,
+    "backbone_mbps": 100,
+    "n_values": [1, 5, 20, 50, 100],
+    "warn_threshold": 0.1
+  },
+  "effective_links": {
+    "links_mbps": [100, 50, 80],
+    "efficiencies": [1.0, 0.6, 0.1]
+  }
+}

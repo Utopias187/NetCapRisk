@@ -8,7 +8,7 @@ from .models import (
     per_flow_throughput_shared_backbone,
     effective_link_rates,
 )
-from .report import dos_sweep
+from .report import dos_sweep, load_config, assess_config
 
 
 def _print(data: dict, as_json: bool) -> None:
@@ -86,8 +86,8 @@ def cmd_dos(args: argparse.Namespace) -> None:
         _print(report, True)
         return
 
-    print("N_flows | per-flow (Mbps) | total (Mbps) | headroom | risk")
-    print("--------------------------------------------------------")
+    print("N_flows | per-flow (Mbps) | total (Mbps) | headroom | severity | risk")
+    print("------------------------------------------------------------------")
     for r in report["results"]:
         risk = ",".join(r["risk"]) if r["risk"] else "-"
         print(
@@ -95,8 +95,53 @@ def cmd_dos(args: argparse.Namespace) -> None:
             f"{r['per_flow_throughput_mbps']:>13.4f} | "
             f"{r['total_throughput_mbps']:>11.4f} | "
             f"{r['backbone_headroom_ratio']:>7.3f} | "
+            f"{r['severity']:^8} | "
             f"{risk}"
         )
+
+
+def cmd_assess(args: argparse.Namespace) -> None:
+    cfg = load_config(args.input)
+    rep = assess_config(cfg)
+
+    if args.json:
+        _print(rep, True)
+        return
+
+    print("=== NetCapRisk Assess ===")
+    meta = rep.get("meta", {})
+    if meta:
+        print(f"meta: {meta}")
+
+    results = rep.get("results", {})
+
+    if "single_path" in results:
+        r = results["single_path"]
+        print("\n[single_path]")
+        print(f"throughput: {r['throughput_mbps']} Mbps")
+        print(f"bottleneck: {r['bottleneck']} ({r['bottleneck_rate_mbps']} Mbps)")
+
+    if "fair_share" in results:
+        fs = results["fair_share"]
+        print("\n[fair_share / dos_sweep]")
+        print("N | per-flow | total | headroom | severity | risk")
+        print("------------------------------------------------")
+        for row in fs["results"]:
+            risk = ",".join(row["risk"]) if row["risk"] else "-"
+            print(
+                f"{row['N_flows']:>3} | "
+                f"{row['per_flow_throughput_mbps']:>7.3f} | "
+                f"{row['total_throughput_mbps']:>5.1f} | "
+                f"{row['backbone_headroom_ratio']:>7.3f} | "
+                f"{row['severity']:^8} | "
+                f"{risk}"
+            )
+
+    if "effective_links" in results:
+        r = results["effective_links"]
+        print("\n[effective_links]")
+        print(f"effective_links: {r['effective_links_mbps']}")
+        print(f"throughput: {r['throughput_mbps']} Mbps")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -104,17 +149,18 @@ def build_parser() -> argparse.ArgumentParser:
         prog="netcaprisk",
         description="Mini network throughput + risk modeling tool",
     )
-    p.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
     sub = p.add_subparsers(dest="command", required=True)
 
     s1 = sub.add_parser("single", help="single flow, single path")
+    s1.add_argument("--json", action="store_true", help="print machine-readable JSON")
     s1.add_argument("--rs", type=float, required=True, help="sender rate (Mbps)")
     s1.add_argument("--links", type=float, nargs="+", required=True, help="link capacities (Mbps)")
     s1.add_argument("--names", type=str, nargs="*", default=None, help="optional link names")
     s1.set_defaults(func=cmd_single)
 
     s2 = sub.add_parser("fair", help="N flows fairly share a backbone")
+    s2.add_argument("--json", action="store_true", help="print machine-readable JSON")
     s2.add_argument("--rs", type=float, required=True, help="sender rate (Mbps)")
     s2.add_argument("--rc", type=float, required=True, help="receiver rate (Mbps)")
     s2.add_argument("--backbone", type=float, required=True, help="backbone capacity (Mbps)")
@@ -122,17 +168,24 @@ def build_parser() -> argparse.ArgumentParser:
     s2.set_defaults(func=cmd_fair)
 
     s3 = sub.add_parser("effective", help="apply per-link efficiencies")
+    s3.add_argument("--json", action="store_true", help="print machine-readable JSON")
     s3.add_argument("--links", type=float, nargs="+", required=True, help="base link capacities (Mbps)")
     s3.add_argument("--eff", type=float, nargs="+", required=True, help="efficiencies in [0,1]")
     s3.set_defaults(func=cmd_effective)
 
     s4 = sub.add_parser("dos", help="simulate load increase (DoS pressure) on shared backbone")
+    s4.add_argument("--json", action="store_true", help="print machine-readable JSON")
     s4.add_argument("--rs", type=float, required=True, help="sender rate (Mbps)")
     s4.add_argument("--rc", type=float, required=True, help="receiver rate (Mbps)")
     s4.add_argument("--backbone", type=float, required=True, help="backbone capacity (Mbps)")
     s4.add_argument("--N", type=int, nargs="+", required=True, help="flow counts to sweep")
     s4.add_argument("--warn-threshold", type=float, default=0.10, help="headroom ratio warning threshold")
     s4.set_defaults(func=cmd_dos)
+
+    s5 = sub.add_parser("assess", help="run an assessment from a JSON config file")
+    s5.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    s5.add_argument("--input", type=str, required=True, help="path to JSON config")
+    s5.set_defaults(func=cmd_assess)
 
     return p
 
